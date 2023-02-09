@@ -1,0 +1,176 @@
+---
+title: "Data Analysis of NBA 2016-2017 Season"
+author: "Charles Cantwell"
+date: "2022-11-29"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## General data
+```{r , echo=TRUE,warning=FALSE,message=FALSE, eval=TRUE}
+
+library(dplyr)
+set.seed(1234) 
+data_full <- read.csv("E:/school/Math Stat/DA Final/nba_teamgame_20167_orig.csv")
+#The data_bus dummy variables are used to hold data split by certain attributes. the bus is then used then converted to a table / data frame format for functions to work and ease of use. Each bus is essentially stemmed from a tree of various attributes I am coding for such as the Team variable, Home vs Away etc.
+data_bus <- group_split(data_full, Team)
+#data_bus2 <- group_split(data_full, Opponent)
+data_nola <- as_tibble(data_bus[[19]])
+#nola_away <- as_tibble(data_bus2[[19]])
+
+data_bus2 <- group_split(data_full, Home)
+data_full_by_home <- as_tibble(data_bus2[[2]])
+data_bus3 <- group_split(data_full_by_home, Team)
+nola_home <- as_tibble(data_bus3[[19]])
+data_bus5 <- group_split(nola_home, TeamWin)
+nola_home_wins <- as_tibble(data_bus5[[2]])
+nola_home_losses <- as_tibble(data_bus5[[1]])
+
+data_full_by_away <- as_tibble(data_bus2[[1]])
+data_bus4 <- group_split(data_full_by_away, Team)
+nola_away <- as_tibble(data_bus4[[19]])
+data_bus6 <- group_split(nola_away, TeamWin)
+nola_away_wins <- as_tibble(data_bus6[[2]])
+nola_away_losses <- as_tibble(data_bus6[[1]])
+
+data_bus7 <- group_split(data_full, GameType)
+regular_season <- as_tibble(data_bus7[[1]])
+playoff_games <- as_tibble(data_bus7[[2]])
+```
+
+## For the New Orleans Pelicans and regression
+
+```{r , echo=TRUE,warning=FALSE,message=FALSE, eval=TRUE}
+#plot(pressure)
+library(lattice)
+library(ggplot2)
+library(GGally)
+library(e1071)
+
+#This is to visualize the score difference between the Pelicans and the opposing team.
+densityplot(nola_home$TeamScr-nola_home$OppScr, data_nola)
+#Most of the Pelicans' home games are lost with a point difference of 15 to 0 points.
+densityplot(nola_away$TeamScr-nola_away$OppScr, data_nola)
+#Most of the Pelicans' away games are lost with a point difference of 15 to 0 points, with the difference in this distribution being centered farther left from the mean
+
+densityplot(nola_home_wins$eff-nola_home_losses$eff)
+densityplot(nola_away_wins$eff-nola_away_losses$eff)
+
+
+
+#This is to calculate the wins and losses for home and away games of the Pelicans
+total_home_wins <- sum(nola_home$TeamWin)
+total_home_wins
+total_home_losses <- 41-total_home_wins
+total_home_losses
+total_away_wins <- sum(nola_away$TeamWin)
+total_away_wins
+total_away_losses <- 41-total_away_wins
+total_away_losses
+
+
+library(randomForest)
+library(tree)
+library(pROC)
+set.seed(420)
+n <- nrow(regular_season)
+in.train <- sample(1:n,0.75*n) #generating a sample
+test <- playoff_games #Goal is to predict playoff game scores later on
+
+
+
+rf=randomForest(TeamWin~., data=regular_season,subset=in.train, mtry=9,ntree=500,importance=TRUE)
+
+
+
+varImpPlot(rf,pch=20,main="Random Forest")
+
+
+#To make VarImp plots 
+layout(matrix(c(1,1,1),  ncol=3, byrow = TRUE),widths = c(1,4))
+par(mfrow=c(1,3))
+par(pty="s")
+#plot.roc(testrfroc,xlim=c(1,0),print.auc=TRUE)
+varImpPlot(rf,pch=20,type=1)
+varImpPlot(rf,pch=20,type=2)
+
+
+
+
+```
+
+
+#Predicting scores for playoff games using regular season data
+```{r , echo=TRUE,warning=FALSE,message=FALSE, eval=TRUE}
+rf_TeamScr=randomForest(TeamScr~., data=regular_season,subset=in.train, mtry=9,ntree=500,importance=TRUE)
+rf_OppScr=randomForest(OppScr~., data=regular_season,subset=in.train, mtry=9,ntree=500,importance=TRUE)
+#These models are for predicting the TeamScr and OppScr in the data. It is obvious that the TeamScr model is more accurate since OppScr uses the other team's data to predict it's own score.
+
+varImpPlot(rf_TeamScr,pch=20,type=1)
+varImpPlot(rf_TeamScr,pch=20,type=2)
+
+#TeamScr and OppScr predictions and testing the accuracy of the models 
+TeamScr_pred <- predict(rf_TeamScr, newdata= test)
+Team_actual = playoff_games$TeamScr
+
+RSQUARE_team = cor(Team_actual,TeamScr_pred)^2
+RSQUARE_team
+TeamScr_percenterror = mean(abs((Team_actual-TeamScr_pred)/Team_actual))*100
+TeamScr_percenterror
+
+OppScr_pred <- predict(rf_OppScr, newdata= test)
+Opp_actual = playoff_games$OppScr
+
+RSQUARE_opp = cor(Opp_actual,OppScr_pred)^2
+RSQUARE_opp
+OppScr_percenterror = mean(abs((Opp_actual-OppScr_pred)/Opp_actual))*100
+OppScr_percenterror
+
+
+#Now to test the TeamScr (most accurate) model for the championship series
+data_bus8 <- group_split(playoff_games, Team)
+Cleveland_partition <- as_tibble(data_bus8[[4]])
+Cleveland_pred <- predict(rf_TeamScr, newdata= Cleveland_partition[14:18,])
+
+#Now to calculate R squared and the percent error
+Cleveland_actual = Cleveland_partition[14:18,]$TeamScr
+RSQUARE_Cleveland = cor(Cleveland_actual,Cleveland_pred)^2
+RSQUARE_Cleveland
+Cleveland_percenterror = mean(abs((Cleveland_actual-Cleveland_pred)/Cleveland_actual))*100
+Cleveland_percenterror
+
+
+Golden_partition <- as_tibble(data_bus8[[5]])
+Golden_pred <- predict(rf_TeamScr, newdata= Golden_partition[13:17,])
+
+Golden_actual = Golden_partition[13:17,]$TeamScr
+RSQUARE_Golden = cor(Golden_actual,Golden_pred)^2
+RSQUARE_Golden
+Golden_percenterror = mean(abs((Golden_actual-Golden_pred)/Golden_actual))*100
+Golden_percenterror
+
+
+
+data_bus9 <- group_split(regular_season, Team)
+Cleveland_regular <- as_tibble(data_bus9[[6]])
+Golden_regular <- as_tibble(data_bus9[[10]])
+
+#To compare teams' performance in the regular and final series
+
+G_mean_bus = Golden_partition$eff[13:17]
+Golden_eff_mean1= mean(G_mean_bus)
+Golden_eff_mean1
+C_mean_bus = Cleveland_partition$eff[14:18]
+Cleveland_eff_mean1 = mean(C_mean_bus)
+Cleveland_eff_mean1
+G_eff_mean2 = mean(Golden_regular$eff)
+G_eff_mean2
+C_eff_mean2 = mean(Cleveland_regular$eff)
+C_eff_mean2
+```
